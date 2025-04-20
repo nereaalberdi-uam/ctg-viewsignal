@@ -10,18 +10,36 @@ automático de las señales de FHR (frecuencia cardiaca fetal) y UC (contraccion
 y detectar deceleraciones fetales y contracciones uterinas para su análisis.
 """)
 
+# === CONFIGURACIÓN ===
+DB_FOLDER = "ctu-chb-database"
+DROPBOX_URL = "https://www.dropbox.com/scl/fo/8k6fx7usnfwhfo7u5wsqy/AN5KRLH-zYU-8A0bqD6l7x0?rlkey=6bxc88pby3oexj5gfl6gq9h9q&st=who56fl7&dl=1" 
+
+# === FUNCIONES ===
+def download_and_extract_dropbox_zip(url, extract_to=DB_FOLDER, zip_name="ctg_data.zip"):
+    if not Path(extract_to).exists():
+        st.info("Descargando base de datos desde Dropbox...")
+        r = requests.get(url)
+        with open(zip_name, "wb") as f:
+            f.write(r.content)
+        with zipfile.ZipFile(zip_name, 'r') as zip_ref:
+            zip_ref.extractall(".")
+        os.remove(zip_name)
+        st.success("Base de datos descargada y lista.")
+
+# Descargar los datos si no están
+download_and_extract_dropbox_zip(DROPBOX_URL)
+
 # Sidebar inputs for record selection and parameters
 st.sidebar.header("Seleccionar registro CTG")
 record_name = st.sidebar.text_input("Nombre del registro (ID):", value="")
-db_path = st.sidebar.text_input("Ruta de la base de datos CTG:", value="")
 
 if st.sidebar.button("Procesar registro"):
-    if not record_name or not db_path:
-        st.error("Por favor ingrese tanto el ID del registro como la ruta de la base de datos.")
+    if not record_name:
+        st.error("Por favor ingrese el ID del registro.")
     else:
         # Cargar datos originales
         try:
-            original_fhr, original_uc, fs, metadata_df = load_ctg_data(record_name, db_path)
+            original_fhr, original_uc, fs, metadata_df = load_ctg_data(record_name, DB_FOLDER)
         except Exception as e:
             st.error(f"Error al cargar el registro: {e}")
             st.stop()
@@ -36,7 +54,7 @@ if st.sidebar.button("Procesar registro"):
         st.pyplot(fig_orig)
 
         # Ejecutar pipeline de preprocesamiento (recorte e interpolación)
-        fhr_clean, uc_clean, fs, _ = preprocess_ctg_pipeline(record_name, db_path)
+        fhr_clean, uc_clean, fs, _ = preprocess_ctg_pipeline(record_name, DB_FOLDER)
         if fhr_clean is None or uc_clean is None:
             st.warning("La señal está prácticamente plana; se omite el análisis.")
             st.stop()
