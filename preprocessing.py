@@ -4,193 +4,271 @@ import numpy as np
 import pandas as pd
 from scipy.interpolate import PchipInterpolator, interp1d, CubicSpline
 
-# ----------------------------- Carga de datos CTG ----------------------------- #
+#------------------------------------------- LOAD -----------------------------------------------------------
 
 def load_ctg_data(record_name, db_path):
     """
-    Carga datos de CTG (Cardiotocografía) desde un registro de PhysioNet.
+    Load CTG (Cardiotocography) data from the PhysioNet database.
 
-    Parámetros:
-    - record_name (str): Nombre del registro a cargar.
-    - db_path (str): Ruta al directorio que contiene los archivos del registro.
+    Parameters:
+    - record_name (str): Name of the record to be loaded.
+    - db_path (str): Path to the database files.
 
-    Retorna:
-    - fhr (numpy.ndarray): Señal de Fetal Heart Rate (FHR).
-    - uc (numpy.ndarray): Señal de Uterine Contractions (UC).
-    - fs (float): Frecuencia de muestreo de las señales.
-    - metadata_df (pandas.DataFrame): DataFrame con metadatos del archivo .hea.
+    Returns:
+    - fhr (numpy.ndarray): Fetal heart rate (FHR) signal, either processed or raw.
+    - uc (numpy.ndarray): Uterine contraction (UC) signal, either processed or raw.
+    - fs (float): Sampling frequency of the signals.
+    - metadata_df (pandas.DataFrame): DataFrame containing metadata from the header file.
+
+    Example Usage:
+    --------------
+    record_name = '1137'  # Other examples: '1023', '1137'
+    db_path = '../ctu-chb-database'  
+
+    fhr, uc, fs, metadata_df = load_ctg_data(record_name, db_path)
     """
-    # Leer el registro utilizando wfdb
+
+    # Load the record from the database
     record = wfdb.rdrecord(f"{db_path}/{record_name}")
-    signals = record.p_signal        # Matriz de señales (columnas por tipo de señal)
-    fields = record.sig_name         # Nombres de las señales
-    fs = record.fs                  # Frecuencia de muestreo
 
-    # Identificar índices de las señales FHR y UC
+    # Extract signals and sampling frequency
+    signals = record.p_signal  # Multi-channel signal array
+    fields = record.sig_name  # Signal names
+    fs = record.fs  # Sampling frequency
+
+    # Identify the indices for FHR (Fetal Heart Rate) and UC (Uterine Contractions)
     try:
-        fhr_idx = fields.index('FHR')
-        uc_idx = fields.index('UC')
+        fhr_idx = fields.index('FHR')  # Find the index of the FHR signal
+        uc_idx = fields.index('UC')  # Find the index of the UC signal
     except ValueError:
-        raise ValueError("No se encontraron señales FHR o UC en el registro.")
+        raise ValueError("FHR or UC signals were not found in the record.")
 
-    # Extraer las señales FHR y UC
-    fhr = pd.Series(signals[:, fhr_idx])
-    uc = pd.Series(signals[:, uc_idx])
+    # Extract the FHR and UC signals as Pandas Series for easy handling
+    fhr = pd.Series(signals[:, fhr_idx])  # FHR signal data
+    uc = pd.Series(signals[:, uc_idx])  # UC signal data
 
-    # Cargar metadatos desde el archivo .hea del registro
-    header_path = f"{db_path}/{record_name}.hea"
+    # Load metadata from the header file
+    header_path = f"{db_path}/{record_name}.hea"  # Path to the header file
     metadata = []
+    
     with open(header_path, 'r') as f:
-        for line in f:
-            if line.startswith("#"):
+        lines = f.readlines()
+        for line in lines:
+            if line.startswith("#"):  # Metadata lines start with "#"
                 parts = line[1:].strip().split(maxsplit=1)
                 if len(parts) == 2:
                     key, value = parts
                     metadata.append((key, value))
+
+    # Convert metadata into a DataFrame for structured representation
     metadata_df = pd.DataFrame(metadata, columns=["Parameter", "Value"])
 
     return fhr.values, uc.values, fs, metadata_df
 
-# ---------------------------- Preprocesamiento CTG ---------------------------- #
 
-def detect_long_zero_gaps(signal, secs=15, freq=4, union=0, tolerance=0):
+
+#------------------------------------------- PREPROCESSING -----------------------------------------------------------
+
+def detect_long_zero_gaps(signal, secs=15, freq=4, union=0, tolerance=0, verbose=False):
     """
-    Detecta tramos largos donde la señal permanece constante (derivada ~ 0).
-
-    Parámetros:
-    - signal (array-like): Señal de entrada (1D).
-    - secs (float): Duración mínima en segundos para considerar un tramo como largo.
-    - freq (float): Frecuencia de muestreo en Hz.
-    - union (int): Máximo número de muestras no constantes entre tramos para unirlos.
-    - tolerance (float): Tolerancia alrededor de cero para considerar la derivada ~ 0.
-
-    Retorna:
-    - final_gaps (list): Lista de tuplas (start_time, end_time, duration, percentage) de cada tramo constante.
-    - total_percentage (float): Porcentaje total del tiempo de señal ocupado por estos tramos constantes.
+    Detects long gaps where the signal is constant (based on its derivative).
+    These are regions where the signal's derivative is within ±tolerance from zero.
+    
+    Parameters:
+    - signal (array-like): The input 1D signal.
+    - secs (float): Minimum duration (in seconds) for a gap to be considered long.
+    - freq (float): Sampling frequency in Hz.
+    - union (int): Max number of non-constant points between gaps to merge.
+    - tolerance (float): Tolerance around zero for derivative to be considered zero.
+    - verbose (bool): Whether to print detailed output.
+    
+    Returns:
+    - final_gaps (list of tuples): Each tuple is (start_time, end_time, duration, percentage).
+    - total_percentage (float): Total percentage of time occupied by all detected gaps.
     """
     signal = np.array(signal)
     total_duration = len(signal) / freq
 
-    # Derivada de la señal
-    derivative = np.diff(signal, prepend=signal[0])
+    # Compute derivative of signal
+    derivative = np.diff(signal, prepend=signal[0])  # Same length as signal
     zero_indices = np.where(np.abs(derivative) <= tolerance)[0]
 
-    # Identificar tramos constantes largos
     long_gaps = []
     if zero_indices.size > 0:
         start = zero_indices[0]
         prev = start
+
         for i in range(1, len(zero_indices)):
             if zero_indices[i] != prev + 1:
-                # Fin de un tramo constante
                 end = prev
                 length = end - start + 1
                 duration = length / freq
+
                 if duration >= secs:
                     long_gaps.append((start, end, duration))
-                # Iniciar nuevo tramo
+
                 start = zero_indices[i]
+
             prev = zero_indices[i]
-        # Último tramo
+
+        # Handle final segment
         end = prev
         length = end - start + 1
         duration = length / freq
         if duration >= secs:
             long_gaps.append((start, end, duration))
 
-    # Unir tramos cercanos (separados por menos de `union` muestras)
+    # Merge close gaps
     merged_gaps = []
     if long_gaps:
-        merged_start, merged_end, _ = long_gaps[0]
+        merged_start, merged_end, merged_duration = long_gaps[0]
+
         for i in range(1, len(long_gaps)):
             start, end, duration = long_gaps[i]
+
             if start - merged_end <= union:
-                # Unir con el tramo anterior
                 merged_end = end
-            else:
-                # Registrar tramo anterior y comenzar uno nuevo
                 merged_duration = (merged_end - merged_start + 1) / freq
+            else:
                 merged_gaps.append((merged_start, merged_end, merged_duration))
-                merged_start, merged_end = start, end
-        # Añadir el último tramo unido
-        merged_duration = (merged_end - merged_start + 1) / freq
+                merged_start, merged_end, merged_duration = start, end, duration
+
         merged_gaps.append((merged_start, merged_end, merged_duration))
 
-    # Convertir a tiempos y calcular porcentajes
+    # Convert to time and calculate percentages
     final_gaps = []
-    total_percentage = 0.0
+    total_percentage = 0
     for start_idx, end_idx, duration in merged_gaps:
         start_time = start_idx / freq
         end_time = end_idx / freq
-        percentage = (duration / total_duration) * 100.0
+        percentage = (duration / total_duration) * 100
         total_percentage += percentage
         final_gaps.append((start_time, end_time, duration, percentage))
 
+    if verbose:
+        print(f"Detected {len(final_gaps)} long constant-value gaps.")
+        print(f"Total percentage of signal occupied by gaps: {total_percentage:.2f}%")
+        for idx, (st, et, d, p) in enumerate(final_gaps):
+            print(f"Gap {idx+1}: Start {st:.2f}s, End {et:.2f}s, Duration {d:.2f}s, {p:.2f}% of total time")
+
     return final_gaps, total_percentage
 
-def trim_signals(fhr, uc, fs, fhr_gaps, uc_gaps):
+
+def trim_signals(fhr, uc, fs, fhr_gaps, uc_gaps, verbose = False):
     """
-    Recorta las señales FHR y UC para sincronizarlas, removiendo inicios o finales planos.
+    Trims two signals (FHR and UC) to the same synchronized interval by removing leading
+    and trailing long gaps from either signal.
 
-    Se eliminan porciones iniciales o finales de las señales si corresponden a tramos constantes detectados.
+    The gaps are given in seconds, so we must convert them back to array indices using fs.
 
-    Parámetros:
-    - fhr (array-like): Señal FHR.
-    - uc (array-like): Señal UC.
-    - fs (float): Frecuencia de muestreo en Hz.
-    - fhr_gaps (list): Lista de tramos constantes en FHR (tuplas con tiempos de inicio/fin).
-    - uc_gaps (list): Lista de tramos constantes en UC.
+    Parameters:
+    - fhr (array-like): Fetal Heart Rate (FHR) signal.
+    - uc (array-like): Uterine Contractions (UC) signal.
+    - fs (float): Sampling frequency in Hz.
+    - fhr_gaps (list of tuples): List of (start_time, end_time, duration, percentage) tuples representing long gaps in FHR.
+    - uc_gaps (list of tuples): List of (start_time, end_time, duration, percentage) tuples representing long gaps in UC.
 
-    Retorna:
-    - trimmed_fhr (numpy.ndarray): Señal FHR recortada.
-    - trimmed_uc (numpy.ndarray): Señal UC recortada.
+    Returns:
+    - trimmed_fhr (numpy.ndarray): FHR signal trimmed to the synchronized interval.
+    - trimmed_uc (numpy.ndarray): UC signal trimmed to the synchronized interval.
     """
+
+    # Convert to numpy arrays
     fhr = np.array(fhr)
     uc = np.array(uc)
-    # Convertir tiempos de gaps a índices de muestra
-    fhr_gaps_idx = [(int(start_time * fs), int(end_time * fs)) for start_time, end_time, _, _ in fhr_gaps]
-    uc_gaps_idx = [(int(start_time * fs), int(end_time * fs)) for start_time, end_time, _, _ in uc_gaps]
 
-    # Calcular recorte inicial y final según gaps al inicio o al final de cada señal
-    start_cut = max(
-        fhr_gaps_idx[0][1] + 1 if fhr_gaps_idx and fhr_gaps_idx[0][0] == 0 else 0,
-        uc_gaps_idx[0][1] + 1 if uc_gaps_idx and uc_gaps_idx[0][0] == 0 else 0
-    )
-    end_cut = min(
-        fhr_gaps_idx[-1][0] if fhr_gaps_idx and fhr_gaps_idx[-1][1] == len(fhr) - 1 else len(fhr),
-        uc_gaps_idx[-1][0] if uc_gaps_idx and uc_gaps_idx[-1][1] == len(uc) - 1 else len(uc)
-    )
-    # Aplicar recorte
-    trimmed_fhr = fhr[start_cut:end_cut]
-    trimmed_uc = uc[start_cut:end_cut]
+    if verbose:
+        print(f"Original FHR length: {len(fhr)} samples")
+        print(f"Original UC length: {len(uc)} samples")
+        print(f"Sampling frequency: {fs} Hz")
+    
+        # Print detected gaps for debugging
+        print(f"FHR long gaps (in seconds): {fhr_gaps}")
+        print(f"UC long gaps (in seconds): {uc_gaps}")
+
+    # Convert time-based gaps back to index-based gaps
+    fhr_gaps_indices = [(int(start_time * fs), int(end_time * fs)) for start_time, end_time, _, _ in fhr_gaps]
+    uc_gaps_indices = [(int(start_time * fs), int(end_time * fs)) for start_time, end_time, _, _ in uc_gaps]
+
+    if verbose:
+        print(f"FHR long gaps (converted to indices): {fhr_gaps_indices}")
+        print(f"UC long gaps (converted to indices): {uc_gaps_indices}")
+
+    # Find start trimming point (convert back to indices)
+    fhr_start_trim = fhr_gaps_indices[0][1] + 1 if fhr_gaps_indices and fhr_gaps_indices[0][0] == 0 else 0
+    uc_start_trim = uc_gaps_indices[0][1] + 1 if uc_gaps_indices and uc_gaps_indices[0][0] == 0 else 0
+
+    start_trim = int(max(fhr_start_trim, uc_start_trim))  # Sync both signals
+
+    # Find end trimming point (convert back to indices)
+    fhr_end_trim = fhr_gaps_indices[-1][0] if fhr_gaps_indices and fhr_gaps_indices[-1][1] >= len(fhr) - 1 else len(fhr)
+    uc_end_trim = uc_gaps_indices[-1][0] if uc_gaps_indices and uc_gaps_indices[-1][1] >= len(uc) - 1 else len(uc)
+
+    end_trim = int(min(fhr_end_trim, uc_end_trim))  # Sync both signals
+
+    if verbose: 
+        print(f"Start trim index: {start_trim} (time: {start_trim / fs:.2f}s)")
+        print(f"End trim index: {end_trim} (time: {end_trim / fs:.2f}s)")
+
+    # Trim both signals
+    trimmed_fhr = fhr[start_trim:end_trim]
+    trimmed_uc = uc[start_trim:end_trim]
+
+    if verbose:
+        print(f"Trimmed FHR length: {len(trimmed_fhr)} samples")
+        print(f"Trimmed UC length: {len(trimmed_uc)} samples")
+    
+        print(f"Trimming from {start_trim / fs:.2f}s to {end_trim / fs:.2f}s (syncing both signals)")
+
     return trimmed_fhr, trimmed_uc
+
 
 def interpolate_zero_values(signal, tolerance=0.1, method='pchip'):
     """
-    Reemplaza valores cercanos a cero en la señal por interpolaciones.
+    Detects near-zero values in a signal, replaces them with NaN, and interpolates missing values 
+    using the specified interpolation method.
 
-    Valores dentro de ±tolerance respecto a cero se consideran faltantes (NaN) y se interpolan 
-    utilizando el método especificado.
+    Parameters:
+    - signal (array-like): 1D input signal.
+    - tolerance (float, optional): Values within ±tolerance from zero are treated as missing (default: 0.1).
+    - method (str, optional): Interpolation method, one of:
+        - 'pchip' (Piecewise Cubic Hermite Interpolation) [default]
+        - 'linear' (Linear interpolation)
+        - 'cubic' (Cubic spline interpolation)
+        - 'nearest' (Nearest neighbor interpolation)
 
-    Parámetros:
-    - signal (array-like): Señal de entrada.
-    - tolerance (float): Umbral para considerar un valor como cero (default 0.1).
-    - method (str): Método de interpolación ('pchip', 'linear', 'cubic', 'nearest').
+    Returns:
+    - interpolated_signal (numpy.ndarray): Signal with missing values filled.
 
-    Retorna:
-    - interpolated_signal (numpy.ndarray): Señal con valores cero interpolados.
+    Example Usage:
+    --------------
+    # Interpolating using different methods
+    interpolated_pchip = interpolate_zero_values(trimmed_fhr, method='pchip')
+    interpolated_linear = interpolate_zero_values(trimmed_fhr, method='linear')
+    interpolated_cubic = interpolate_zero_values(trimmed_fhr, method='cubic')
+    interpolated_nearest = interpolate_zero_values(trimmed_fhr, method='nearest')
+
+    # Applying to a uterine contraction signal
+    interpolated_uc = interpolate_zero_values(trimmed_uc, method='linear')
+
+    # Handling different tolerances
+    interpolated_fhr_tolerance_05 = interpolate_zero_values(trimmed_fhr, tolerance=0.05, method='pchip')
+    interpolated_fhr_tolerance_2 = interpolate_zero_values(trimmed_fhr, tolerance=2, method='linear')
     """
+
+    # Convert input to a NumPy array of type float (for NaN handling)
     signal = np.array(signal, dtype=float)
-    # Identificar índices con valores ~0 y marcarlos como NaN
-    missing_indices = np.where(np.abs(signal) <= tolerance)[0]
+
+    # Step 1: Detect bellow-zero values and replace them with NaN
+    missing_indices = np.where(signal <= tolerance)[0]
     signal[missing_indices] = np.nan
 
-    # Si muy pocos datos válidos, no se puede interpolar
+    # Step 2: Identify valid data points (non-NaN values)
     valid_indices = np.where(~np.isnan(signal))[0]
     if len(valid_indices) < 2:
-        raise ValueError("No hay suficientes datos válidos para interpolación.")
+        raise ValueError("Not enough valid data points for interpolation.")
 
-    # Elegir interpolador según método
+    # Step 3: Select interpolation method
     if method == 'pchip':
         interpolator = PchipInterpolator(valid_indices, signal[valid_indices])
     elif method == 'linear':
@@ -200,132 +278,147 @@ def interpolate_zero_values(signal, tolerance=0.1, method='pchip'):
     elif method == 'nearest':
         interpolator = interp1d(valid_indices, signal[valid_indices], kind='nearest', fill_value='extrapolate')
     else:
-        raise ValueError("Método de interpolación no soportado. Use 'pchip', 'linear', 'cubic' o 'nearest'.")
+        raise ValueError("Unsupported interpolation method. Choose from 'pchip', 'linear', 'cubic', or 'nearest'.")
 
-    # Interpolar en los puntos marcados como faltantes
+    # Step 4: Apply interpolation to missing values
     interpolated_signal = signal.copy()
-    interpolated_signal[missing_indices] = interpolator(missing_indices)
-    # Asegurar que los valores interpolados sean positivos (si alguno quedó <= tolerance, elevarlos ligeramente)
-    interpolated_signal[missing_indices][interpolated_signal[missing_indices] <= tolerance] = \
-        np.nanmin(signal[valid_indices]) * 0.1
+    interpolated_values = interpolator(missing_indices)
+
+    # Ensure interpolated values are strictly positive
+    interpolated_values[interpolated_values <= tolerance] = np.nanmin(signal[valid_indices]) * 0.1 
+
+    interpolated_signal[missing_indices] = interpolated_values
+
 
     return interpolated_signal
 
-# ---------------------------- Funciones de Gráfica ---------------------------- #
-
-def plot_ctg_signals(fhr, uc, fs, start_time=0, end_time=None):
+#------------------------------------------- PLOT -----------------------------------------------------
+def plot_ctg_signals(fhr, uc, fs, start_time=0, end_time=None, verbose = False):
     """
-    Genera una visualización de las señales FHR y UC en función del tiempo.
+    Visualize CTG (Cardiotocography) signals.
 
-    Parámetros:
-    - fhr (numpy.ndarray): Señal de Fetal Heart Rate.
-    - uc (numpy.ndarray): Señal de Uterine Contractions.
-    - fs (float): Frecuencia de muestreo en Hz.
-    - start_time (float): Tiempo de inicio en segundos para la visualización.
-    - end_time (float): Tiempo de fin en segundos para la visualización (si None, hasta el final).
-    
-    Retorna:
-    - fig (matplotlib.figure.Figure): Figura con dos subgráficos (FHR arriba, UC abajo).
+    Parameters:
+    - fhr (numpy.ndarray): Fetal Heart Rate (FHR) signal.
+    - uc (numpy.ndarray): Uterine Contractions (UC) signal.
+    - fs (float): Sampling frequency in Hz.
+    - start_time (float, optional): Start time for the plot in seconds (default: 0).
+    - end_time (float, optional): End time for the plot in seconds (default: full signal length).
+
+    Example Usage:
+    --------------
+    plot_ctg_signals(fhr, uc, fs, start_time=0, end_time=60)
     """
-    # Determinar rango de índices a mostrar
+
+    # Convert start and end times to sample indices
     start_idx = int(start_time * fs)
-    end_idx = int(end_time * fs) if end_time is not None else len(fhr)
-    start_idx = max(0, start_idx)
-    end_idx = min(len(fhr), end_idx)
-    # Segmento de señal a mostrar
+    end_idx = int(end_time * fs) if end_time else len(fhr)
+
+    # Ensure indices are within valid range
+    start_idx = max(0, start_idx)  # Ensure the start index is not negative
+    end_idx = min(len(fhr), end_idx)  # Ensure the end index does not exceed signal length
+
+    # Extract the desired segment of the signals
     fhr_segment = fhr[start_idx:end_idx]
     uc_segment = uc[start_idx:end_idx]
-    # Vector de tiempo correspondiente
-    duration = (end_idx - start_idx) / fs
-    time = np.linspace(start_time, start_time + duration, len(fhr_segment))
 
-    # Crear la figura con dos subplots compartiendo el eje X
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
-    # Gráfico de FHR
-    ax1.plot(time, fhr_segment, label='FHR', color='blue')
-    ax1.set_ylabel('FHR (BPM)')
-    ax1.set_title('Fetal Heart Rate')
-    ax1.legend()
-    ax1.grid(True)
-    # Gráfico de UC
-    ax2.plot(time, uc_segment, label='UC', color='green')
-    ax2.set_xlabel('Tiempo (s)')
-    ax2.set_ylabel('UC (au)')
-    ax2.set_title('Uterine Contractions')
-    ax2.legend()
-    ax2.grid(True)
-    fig.tight_layout()
+    # Generate corresponding time values for the x-axis
+    time = np.linspace(start_time, start_time + (end_idx - start_idx) / fs, len(fhr_segment))
+
+    fig, axs = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
+
+    axs[0].plot(time, fhr_segment, label='Fetal Heart Rate (FHR)', color='blue')
+    axs[0].set_ylabel('BPM')
+    axs[0].set_title('Fetal Heart Rate')
+    axs[0].legend()
+    axs[0].grid(True)
+
+    axs[1].plot(time, uc_segment, label='Uterine Contractions (UC)', color='green')
+    axs[1].set_xlabel('Time (s)')
+    axs[1].set_ylabel('Intensity')
+    axs[1].set_title('Uterine Contractions')
+    axs[1].legend()
+    axs[1].grid(True)
+
+    plt.tight_layout()
+
     return fig
 
 def plot_signal_with_gaps(signal, fs, long_gaps, total_percentage):
     """
-    Genera una gráfica de una señal con tramos constantes destacados en color.
+    Plots a signal and highlights detected long zero gaps.
 
-    Parámetros:
-    - signal (numpy.ndarray): Señal de entrada.
-    - fs (float): Frecuencia de muestreo en Hz.
-    - long_gaps (list): Lista de tramos constantes (start_time, end_time, dur, %).
-    - total_percentage (float): Porcentaje total del tiempo en tramos constantes.
+    Parameters:
+    - signal (numpy.ndarray): The input signal.
+    - fs (float): Sampling frequency in Hz.
+    - long_gaps (list of tuples): List of detected gaps, each defined as (start_time, end_time, duration, percentage).
+    - total_percentage (float): Total percentage of time occupied by detected gaps.
 
-    Retorna:
-    - fig (matplotlib.figure.Figure): Figura con la señal y los tramos constantes sombreados.
+    Example Usage:
+    --------------
+    plot_signal_with_gaps(fhr, fs, fhr_long_gaps, total_percentage)
+    plot_signal_with_gaps(uc, fs, uc_long_gaps, total_percentage)
     """
-    time = np.arange(len(signal)) / fs
+    time = np.arange(len(signal)) / fs  
     fig, ax = plt.subplots(figsize=(12, 5))
     ax.plot(time, signal, label="Signal", color="blue")
-    # Sombrar los tramos de señal constante detectados
-    for i, (start_time, end_time, _, _) in enumerate(long_gaps):
-        ax.axvspan(start_time, end_time, color="red", alpha=0.5, label="Long Gap" if i == 0 else "")
-    ax.set_xlabel("Tiempo (s)")
-    ax.set_ylabel("Valor de la señal")
-    ax.set_title(f"Señal con tramos constantes destacados (Total: {total_percentage:.2f}% del tiempo)")
+
+    for i, (start, end, _, _) in enumerate(long_gaps):
+        ax.axvspan(start, end, color="red", alpha=0.5, label="Long Gap" if i == 0 else "")
+
+    ax.set_xlabel("Time (seconds)")
+    ax.set_ylabel("Signal Value")
+    ax.set_title(f"Signal with Highlighted Long Zero Gaps (Total Gap: {total_percentage:.2f}%)")
     ax.legend()
-    ax.grid(True)
-    fig.tight_layout()
+    ax.grid()
+
     return fig
 
-def preprocess_ctg_pipeline(record_name, db_path, tolerance=1, interpolation_method='cubic'):
-    """
-    Pipeline completo de preprocesamiento de señales CTG:
-      - Carga del registro.
-      - Detección iterativa y recorte de tramos constantes en FHR y UC.
-      - Interpolación de los valores cercanos a cero restantes.
+#----------------------------------------------PIPELINE-----------------------------------------------------------
 
-    Parámetros:
-    - record_name (str): Nombre del registro a procesar.
-    - db_path (str): Ruta al directorio de la base de datos.
-    - tolerance (float): Tolerancia para detectar derivada ~0 en detect_long_zero_gaps.
-    - interpolation_method (str): Método de interpolación para valores cero ('cubic', 'pchip', etc.).
-
-    Retorna:
-    - fhr_clean (numpy.ndarray): Señal FHR final preprocesada.
-    - uc_clean (numpy.ndarray): Señal UC final preprocesada.
-    - fs (float): Frecuencia de muestreo.
-    - metadata_df (pandas.DataFrame): DataFrame de metadatos del registro.
-    """
-    # Cargar señales originales
+def preprocess_ctg_pipeline(record_name, db_path, tolerance=1, interpolation_method='cubic', plot=False):
+    # Load raw signals
     fhr, uc, fs, metadata_df = load_ctg_data(record_name, db_path)
 
-    # Recorte iterativo de tramos planos al inicio/final de las señales
-    for _ in range(10):  # hasta 10 iteraciones máximo
-        # Detectar tramos planos largos en cada señal
+    figs = []
+    
+    if plot:
+        figs.append(plot_ctg_signals(fhr, uc, fs))
+
+    # --- Iterative trimming loop ---
+    for _ in range(10):  # max 10 iterations
+        # Detect long zero gaps again
         fhr_gaps, fhr_perc = detect_long_zero_gaps(fhr, secs=30, freq=fs, union=3, tolerance=tolerance)
         uc_gaps, uc_perc = detect_long_zero_gaps(uc, secs=30, freq=fs, union=3, tolerance=tolerance)
-        # Si la mayor parte de la señal es plana, abortar (posible registro corrupto o sin datos)
+
         if fhr_perc > 98 or uc_perc > 98:
+            if plot:
+                print("Signal is completely flat. Skipping.")
             return None, None, None, None
-        # Determinar si es necesario recortar extremos (si hay gaps al inicio o fin)
+
+        # Determine if start/end trimming is needed
         trim_needed = False
-        if (fhr_gaps and fhr_gaps[0][0] == 0) or (fhr_gaps and fhr_gaps[-1][1] >= len(fhr) / fs - 1):
+        if fhr_gaps and fhr_gaps[0][0] == 0 or fhr_gaps and fhr_gaps[-1][1] >= len(fhr) / fs - 1:
             trim_needed = True
-        if (uc_gaps and uc_gaps[0][0] == 0) or (uc_gaps and uc_gaps[-1][1] >= len(uc) / fs - 1):
+        if uc_gaps and uc_gaps[0][0] == 0 or uc_gaps and uc_gaps[-1][1] >= len(uc) / fs - 1:
             trim_needed = True
+
+        # Exit loop if no trimming needed
         if not trim_needed:
-            break  # no hay recorte adicional necesario
-        # Recortar señales al intervalo común válido
+            break
+
+        # Perform trimming
         fhr, uc = trim_signals(fhr, uc, fs, fhr_gaps, uc_gaps)
 
-    # Interpolar valores cero en las señales finales
-    fhr_clean = interpolate_zero_values(fhr, method=interpolation_method)
-    uc_clean = interpolate_zero_values(uc, method=interpolation_method)
-    return fhr_clean, uc_clean, fs, metadata_df
+        if plot:
+            print("Signals were trimmed again.")
+            figs.append(plot_ctg_signals(fhr, uc, fs))
+
+    # Interpolate
+    interpolated_fhr = interpolate_zero_values(fhr, method=interpolation_method)
+    interpolated_uc = interpolate_zero_values(uc, method=interpolation_method)
+
+    if plot:
+        print("Final interpolated signals:")
+        figs.append(plot_ctg_signals(interpolated_fhr, interpolated_uc, fs))
+
+    return interpolated_fhr, interpolated_uc, fs, metadata_df, figs if plot else None

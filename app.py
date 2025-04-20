@@ -6,7 +6,7 @@ import requests
 
 from preprocessing import load_ctg_data, preprocess_ctg_pipeline, plot_ctg_signals
 from preprocessing import plot_signal_with_gaps
-from deceleration import get_classified_decelerations, plot_decc_contr, animate_paired_events
+from deceleration import get_classified_decelerations, animate_paired_events
 
 st.title("Análisis interactivo de señales CTG")
 st.markdown("""
@@ -49,44 +49,32 @@ if st.sidebar.button("Procesar registro"):
             st.error(f"Error al cargar el registro: {e}")
             st.stop()
 
-        # Mostrar metadatos del registro
-        st.subheader("Metadatos del registro")
-        st.dataframe(metadata_df)
-
         # Mostrar señales originales sin procesar
         st.subheader("Señales originales FHR y UC")
         fig_orig = plot_ctg_signals(original_fhr, original_uc, fs)
         st.pyplot(fig_orig)
 
         # Ejecutar pipeline de preprocesamiento (recorte e interpolación)
-        fhr_clean, uc_clean, fs, _ = preprocess_ctg_pipeline(record_name, DB_FOLDER)
-        if fhr_clean is None or uc_clean is None:
+        result = preprocess_ctg_pipeline(record_name, DB_FOLDER, plot=True)
+        if result[0] is None or result[1] is None:
             st.warning("La señal está prácticamente plana; se omite el análisis.")
             st.stop()
-
-        # Mostrar señales limpias después del preprocesamiento
-        st.subheader("Señales preprocesadas FHR y UC")
-        fig_clean = plot_ctg_signals(fhr_clean, uc_clean, fs)
-        st.pyplot(fig_clean)
-
-        # Opcional: mostrar tramos planos detectados en las señales originales
-        fhr_gaps, fhr_perc = [], 0
-        uc_gaps, uc_perc = [], 0
-        try:
-            fhr_gaps, fhr_perc = plot_signal_with_gaps.__wrapped__.__globals__['detect_long_zero_gaps'](original_fhr, secs=30, freq=fs, union=3, tolerance=1)
-            uc_gaps, uc_perc = plot_signal_with_gaps.__wrapped__.__globals__['detect_long_zero_gaps'](original_uc, secs=30, freq=fs, union=3, tolerance=1)
-        except Exception:
-            pass
-        if fhr_gaps and uc_gaps:
-            fig_gaps_fhr = plot_signal_with_gaps(original_fhr, fs, fhr_gaps, fhr_perc)
-            fig_gaps_uc = plot_signal_with_gaps(original_uc, fs, uc_gaps, uc_perc)
-            st.subheader("Tramos planos detectados en la señal original")
-            st.pyplot(fig_gaps_fhr)
-            st.pyplot(fig_gaps_uc)
+        
+        fhr_clean, uc_clean, fs, _, figs_pipeline = result
+        
+        # Mostrar señales limpias y pasos intermedios del preprocesamiento
+        st.subheader("Proceso de preprocesamiento y señales finales")
+        for fig in figs_pipeline:
+            st.pyplot(fig)
 
         # Detectar deceleraciones y contracciones, y clasificarlas
-        early_decs, late_decs, variable_decs, decelerations, contractions, paired_events, baseline_obj = \
-            get_classified_decelerations(fhr_clean, uc_clean, fs)
+        early_decs, late_decs, variable_decs, decelerations, contractions, paired_events, baseline_obj, figs_decel = \
+            get_classified_decelerations(fhr_clean, uc_clean, fs, verbose=True)
+        
+        # Mostrar gráficos de detección y clasificación
+        st.subheader("Eventos detectados en señales procesadas")
+        for fig in figs_decel:
+            st.pyplot(fig)
 
         # Mostrar resumen de deceleraciones clasificadas
         st.subheader("Resumen de deceleraciones detectadas")
@@ -96,10 +84,6 @@ if st.sidebar.button("Procesar registro"):
         st.write(f"**Total deceleraciones detectadas:** {len(decelerations)}")
         st.write(f"**Total contracciones detectadas:** {len(contractions)}")
 
-        # Mostrar gráfica combinada de FHR y UC con eventos detectados
-        st.subheader("Señales FHR y UC con eventos detectados")
-        fig_events = plot_decc_contr(fhr_clean, uc_clean, fs, decelerations, baseline_obj, contractions)
-        st.pyplot(fig_events)
 
         # Botón para mostrar animación de emparejamiento
         if paired_events:
