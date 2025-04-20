@@ -1,78 +1,90 @@
 import streamlit as st
-import preprocessing as prep
-import deceleration as dc
-import os
-import matplotlib.pyplot as plt
-import tempfile
-import zipfile
-import requests
-from pathlib import Path
+from preprocessing import load_ctg_data, preprocess_ctg_pipeline, plot_ctg_signals
+from preprocessing import plot_signal_with_gaps
+from deceleration import get_classified_decelerations, plot_decc_contr, animate_paired_events
 
-st.set_page_config(page_title="Visualización de CTG", layout="wide")
-st.title("Visualizador de señales CTG")
+st.title("Análisis interactivo de señales CTG")
+st.markdown("""
+Esta aplicación permite cargar registros de cardiotocografía (CTG), realizar un preprocesamiento 
+automático de las señales de FHR (frecuencia cardiaca fetal) y UC (contracciones uterinas), 
+y detectar deceleraciones fetales y contracciones uterinas para su análisis.
+""")
 
-# === CONFIGURACIÓN ===
-DB_FOLDER = "ctu-chb-database"
-DROPBOX_URL = "https://www.dropbox.com/s/abc123xyz/ctu-chb-database.zip?dl=1"  # ← REEMPLAZAR con tu enlace real
+# Sidebar inputs for record selection and parameters
+st.sidebar.header("Seleccionar registro CTG")
+record_name = st.sidebar.text_input("Nombre del registro (ID):", value="")
+db_path = st.sidebar.text_input("Ruta de la base de datos CTG:", value="")
 
-# === FUNCIONES ===
-def download_and_extract_dropbox_zip(url, extract_to=DB_FOLDER, zip_name="ctg_data.zip"):
-    if not Path(extract_to).exists():
-        st.info("Descargando base de datos desde Dropbox...")
-        r = requests.get(url)
-        with open(zip_name, "wb") as f:
-            f.write(r.content)
-        with zipfile.ZipFile(zip_name, 'r') as zip_ref:
-            zip_ref.extractall(".")
-        os.remove(zip_name)
-        st.success("Base de datos descargada y lista.")
-
-# Descargar los datos si no están
-download_and_extract_dropbox_zip(DROPBOX_URL)
-
-# Entrada del usuario
-record_name = st.text_input("Escribe el nombre del registro (por ejemplo, '2012')", value="2012")
-
-if st.button("Mostrar gráficos"):
-    with st.spinner("Procesando..."):
+if st.sidebar.button("Procesar registro"):
+    if not record_name or not db_path:
+        st.error("Por favor ingrese tanto el ID del registro como la ruta de la base de datos.")
+    else:
+        # Cargar datos originales
         try:
-            # Paso 1: Preprocesamiento
-            fhr, uc, fs, metadata_df = prep.preprocess_ctg_pipeline(
-                record_name, DB_FOLDER, tolerance=1, interpolation_method='linear', plot=True
-            )
-
-            st.subheader("1️⃣ Señales FHR y UC")
-            st.pyplot(plt.gcf())  # Captura el gráfico generado dentro de la función
-            plt.clf()
-
-            # Paso 2: Clasificación de eventos
-            early_decs, late_decs, variable_decs, decelerations, contractions, paired_events, dBaseline = dc.get_classified_decelerations(
-                fhr, uc, fs, verbose=True
-            )
-
-            st.subheader("2️⃣ Clasificación de desaceleraciones")
-            st.pyplot(plt.gcf())  # Captura el gráfico generado dentro de esta función también
-            plt.clf()
-
-            # Paso 3: Mostrar información de eventos
-            st.subheader("3️⃣ Información de eventos detectados")
-            st.markdown(f"""
-            - **Desaceleraciones tempranas:** {len(early_decs)}
-            - **Desaceleraciones tardías:** {len(late_decs)}
-            - **Desaceleraciones variables:** {len(variable_decs)}
-            - **Total de contracciones:** {len(contractions)}
-            - **Eventos emparejados:** {len(paired_events)}
-            """)
-
-            # Paso 4: Animación
-            st.subheader("4️⃣ Animación de eventos emparejados")
-            with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as tmpfile:
-                dc.animate_paired_events(
-                    fhr, uc, fs, dBaseline,
-                    decelerations, contractions, paired_events,
-                    out_path=tmpfile.name
-                )
-                st.image(tmpfile.name, caption="Animación")
-
+            original_fhr, original_uc, fs, metadata_df = load_ctg_data(record_name, db_path)
         except Exception as e:
-            st.error(f"Ocurrió un error: {e}")
+            st.error(f"Error al cargar el registro: {e}")
+            st.stop()
+
+        # Mostrar metadatos del registro
+        st.subheader("Metadatos del registro")
+        st.dataframe(metadata_df)
+
+        # Mostrar señales originales sin procesar
+        st.subheader("Señales originales FHR y UC")
+        fig_orig = plot_ctg_signals(original_fhr, original_uc, fs)
+        st.pyplot(fig_orig)
+
+        # Ejecutar pipeline de preprocesamiento (recorte e interpolación)
+        fhr_clean, uc_clean, fs, _ = preprocess_ctg_pipeline(record_name, db_path)
+        if fhr_clean is None or uc_clean is None:
+            st.warning("La señal está prácticamente plana; se omite el análisis.")
+            st.stop()
+
+        # Mostrar señales limpias después del preprocesamiento
+        st.subheader("Señales preprocesadas FHR y UC")
+        fig_clean = plot_ctg_signals(fhr_clean, uc_clean, fs)
+        st.pyplot(fig_clean)
+
+        # Opcional: mostrar tramos planos detectados en las señales originales
+        fhr_gaps, fhr_perc = [], 0
+        uc_gaps, uc_perc = [], 0
+        try:
+            fhr_gaps, fhr_perc = plot_signal_with_gaps.__wrapped__.__globals__['detect_long_zero_gaps'](original_fhr, secs=30, freq=fs, union=3, tolerance=1)
+            uc_gaps, uc_perc = plot_signal_with_gaps.__wrapped__.__globals__['detect_long_zero_gaps'](original_uc, secs=30, freq=fs, union=3, tolerance=1)
+        except Exception:
+            pass
+        if fhr_gaps and uc_gaps:
+            fig_gaps_fhr = plot_signal_with_gaps(original_fhr, fs, fhr_gaps, fhr_perc)
+            fig_gaps_uc = plot_signal_with_gaps(original_uc, fs, uc_gaps, uc_perc)
+            st.subheader("Tramos planos detectados en la señal original")
+            st.pyplot(fig_gaps_fhr)
+            st.pyplot(fig_gaps_uc)
+
+        # Detectar deceleraciones y contracciones, y clasificarlas
+        early_decs, late_decs, variable_decs, decelerations, contractions, paired_events, baseline_obj = \
+            get_classified_decelerations(fhr_clean, uc_clean, fs)
+
+        # Mostrar resumen de deceleraciones clasificadas
+        st.subheader("Resumen de deceleraciones detectadas")
+        st.write(f"**Deceleraciones Early:** {len(early_decs)}")
+        st.write(f"**Deceleraciones Late:** {len(late_decs)}")
+        st.write(f"**Deceleraciones Variables:** {len(variable_decs)}")
+        st.write(f"**Total deceleraciones detectadas:** {len(decelerations)}")
+        st.write(f"**Total contracciones detectadas:** {len(contractions)}")
+
+        # Mostrar gráfica combinada de FHR y UC con eventos detectados
+        st.subheader("Señales FHR y UC con eventos detectados")
+        fig_events = plot_decc_contr(fhr_clean, uc_clean, fs, decelerations, baseline_obj, contractions)
+        st.pyplot(fig_events)
+
+        # Botón para mostrar animación de emparejamiento
+        if paired_events:
+            if st.button("Mostrar animación de emparejamiento"):
+                gif_path = animate_paired_events(fhr_clean, uc_clean, fs, baseline_obj, decelerations, contractions, paired_events)
+                if gif_path:
+                    st.subheader("Animación de deceleraciones (rojo) emparejadas con contracciones (verde)")
+                    gif_bytes = open(gif_path, "rb").read()
+                    st.image(gif_bytes, format="gif")
+                else:
+                    st.info("No hay deceleraciones del tipo seleccionado para animar.")
