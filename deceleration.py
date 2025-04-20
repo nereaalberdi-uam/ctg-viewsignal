@@ -670,10 +670,12 @@ def get_contractions(uc, fs, window_size = 3, verbose = False):
 def get_classified_decelerations(fhr, uc, fs, verbose = False):
     decelerations, dBaseline = get_decelerations(fhr, fs, verbose = False)
     contractions = get_contractions(uc, fs, window_size = 3, verbose = False)
-    if verbose:
-        plot_decc_contr(fhr, uc, fs, decelerations, dBaseline, contractions)
     
     paired_events = emparejar(decelerations, contractions, tolerance = 3)
     early_decs, late_decs, variable_decs = clasificar_dec(paired_events, diff=5.0, form_criteria=True, verbose = verbose)
 
-    return early_decs, late_decs, variable_decs, decelerations, contractions, paired_events, dBaseline
+    figs = []
+    if verbose:
+        figs = plot_decc_contr(fhr, uc, fs, decelerations, dBaseline, contractions)
+    
+    return early_decs, late_decs, variable_decs, decelerations, contractions, paired_events, dBaseline, figs
