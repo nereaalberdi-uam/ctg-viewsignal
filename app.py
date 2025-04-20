@@ -12,7 +12,7 @@ y detectar deceleraciones fetales y contracciones uterinas para su análisis.
 
 # === CONFIGURACIÓN ===
 DB_FOLDER = "ctu-chb-database"
-DROPBOX_URL = "https://www.dropbox.com/scl/fi/q23kakkcrpail8ujxlrqs/ctu-chb-database.zip?rlkey=5s09onkezm3ysauccfvs70zi7&st=sexhkq7e&dl=1" 
+DROPBOX_URL = "https://www.dropbox.com/scl/fi/q23kakkcrpail8ujxlrqs/ctu-chb-database.zip?rlkey=5s09onkezm3ysauccfvs70zi7&st=n3emf5f6&dl=1" 
 
 # === FUNCIONES ===
 def download_and_extract_dropbox_zip(url, extract_to=DB_FOLDER, zip_name="ctg_data.zip"):
