@@ -13,7 +13,7 @@ st.title("Visualizador de señales CTG")
 
 # === CONFIGURACIÓN ===
 DB_FOLDER = "ctu-chb-database"
-DROPBOX_URL = "https://www.dropbox.com/scl/fi/q23kakkcrpail8ujxlrqs/ctu-chb-database.zip?rlkey=5s09onkezm3ysauccfvs70zi7&st=2jbhqkbz&dl=1" 
+DROPBOX_URL = "https://www.dropbox.com/s/abc123xyz/ctu-chb-database.zip?dl=1"  # Reemplazar con tu enlace real
 
 # === FUNCIONES ===
 def download_and_extract_dropbox_zip(url, extract_to=DB_FOLDER, zip_name="ctg_data.zip"):
@@ -27,8 +27,6 @@ def download_and_extract_dropbox_zip(url, extract_to=DB_FOLDER, zip_name="ctg_da
         os.remove(zip_name)
         st.success("Base de datos descargada y lista.")
 
-# === LÓGICA PRINCIPAL ===
-
 # Descarga si es necesario
 download_and_extract_dropbox_zip(DROPBOX_URL)
 
@@ -38,12 +36,13 @@ record_name = st.text_input("Escribe el nombre del registro (por ejemplo, '2012'
 if st.button("Mostrar gráficos"):
     with st.spinner("Procesando..."):
         try:
-            # Procesamiento de señales
+            # Preprocesamiento
             fhr, uc, fs, metadata_df = prep.preprocess_ctg_pipeline(
                 record_name, DB_FOLDER, tolerance=1, interpolation_method='linear', plot=True
             )
 
-            # Mostrar gráfico generado por matplotlib (del preprocesamiento)
+            # Mostrar gráfico generado por matplotlib
+            st.subheader("1️⃣ Señales FHR y UC")
             st.pyplot(plt.gcf())
             plt.clf()
 
@@ -52,10 +51,21 @@ if st.button("Mostrar gráficos"):
                 fhr, uc, fs, verbose=True
             )
 
-            # Mostrar animación de eventos emparejados
+            st.subheader("2️⃣ Información de eventos detectados")
+            st.markdown(f"""
+            - **Desaceleraciones tempranas:** {len(early_decs)}
+            - **Desaceleraciones tardías:** {len(late_decs)}
+            - **Desaceleraciones variables:** {len(variable_decs)}
+            - **Total de contracciones:** {len(contractions)}
+            - **Eventos emparejados (con desaceleración):** {len(paired_events)}
+            """)
+
+            # Animación de eventos emparejados
+            st.subheader("3️⃣ Animación de eventos emparejados")
             with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as tmpfile:
-                gif_path = dc.animate_paired_events(fhr, uc, fs, dBaseline, decelerations, contractions, paired_events)
-                st.image(gif_path, caption="Animación de eventos emparejados")
+                dc.animate_paired_events(fhr, uc, fs, dBaseline, decelerations, contractions, paired_events,
+                                         out_path=tmpfile.name)
+                st.image(tmpfile.name, caption="Animación")
 
         except Exception as e:
             st.error(f"Ocurrió un error: {e}")
