@@ -87,5 +87,5 @@ if st.sidebar.button("Procesar registro"):
 
         # Botón para mostrar animación de emparejamiento
         if paired_events:
-            gif_path = generar_animacion(fhr, uc, fs, dBaseline, decelerations, contractions, paired_events)
+            gif_path = animate_paired_events(fhr, uc, fs, dBaseline, decelerations, contractions, paired_events)
             st.image(gif_path, caption="Animación de eventos emparejados")
