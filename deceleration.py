@@ -561,7 +561,7 @@ def plot_decc_contr(fhr, cu, fs, decelerations, baseline_decc, contractions):
     plot_fhr_with_decelerations(fhr, fs, baseline_decc, decelerations)
     plot_cu_with_contractions(cu, fs, contractions)
 
-def animate_paired_events(fhr, cu, fs, baseline_fhr, decelerations, contractions, paired_events, dec_type="all"):
+def animate_paired_events(fhr, cu, fs, baseline_fhr, decelerations, contractions, paired_events, dec_type="all", out_path=None):
     """
     Animate FHR and CU signals in separate subplots, highlighting one paired deceleration-contraction at a time.
     Unpaired contractions remain unchanged, while paired contractions turn pale green over time.
@@ -684,6 +684,7 @@ def animate_paired_events(fhr, cu, fs, baseline_fhr, decelerations, contractions
     plt.close(fig)  # Prevent duplicate static display
     
     # Guardar animación como gif
+    # Si no se pasa un path, usar archivo temporal
     if out_path is None:
         with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as tmpfile:
             ani.save(tmpfile.name, writer='pillow')
