@@ -54,9 +54,8 @@ if st.button("Mostrar gráficos"):
 
             # Mostrar animación de eventos emparejados
             with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as tmpfile:
-                dc.animate_paired_events(fhr, uc, fs, dBaseline, decelerations, contractions, paired_events,
-                                         out_path=tmpfile.name)
-                st.image(tmpfile.name, caption="Animación de eventos emparejados")
+                gif_path = dc.animate_paired_events(fhr, uc, fs, dBaseline, decelerations, contractions, paired_events)
+                st.image(gif_path, caption="Animación de eventos emparejados")
 
         except Exception as e:
             st.error(f"Ocurrió un error: {e}")

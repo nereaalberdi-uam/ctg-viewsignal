@@ -6,8 +6,9 @@ from numpy import mean
 from scipy.signal import butter, filtfilt
 
 from matplotlib.animation import FuncAnimation
-from IPython.display import HTML
-
+import streamlit as st
+import tempfile
+import os
 #---------------------------------------- BASELINE -----------------------------------------
     
 class Baseline:
@@ -576,7 +577,7 @@ def animate_paired_events(fhr, cu, fs, baseline_fhr, decelerations, contractions
     - dec_type: Type of decelerations to show ("all", "early", "late", "variable").
 
     Returns:
-    - HTML animation for Jupyter Notebook.
+    - Animatio.
     """
 
     # Filter paired events based on selected type
@@ -680,9 +681,16 @@ def animate_paired_events(fhr, cu, fs, baseline_fhr, decelerations, contractions
     n_frames = len(paired_events)
     ani = FuncAnimation(fig, update, frames=n_frames, interval=1000, repeat=True)
 
-    plt.close(fig)  # Prevent duplicate static display in Jupyter Notebook
+    plt.close(fig)  # Prevent duplicate static display
     
-    return HTML(ani.to_jshtml())  # Return animation for Jupyter
+    # Guardar animación como gif
+    if out_path is None:
+        with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as tmpfile:
+            ani.save(tmpfile.name, writer='pillow')
+            return tmpfile.name
+    else:
+        ani.save(out_path, writer='pillow')
+        return out_path
 
 #----------------------------------------------PIPELINE-----------------------------------------------------------
 
