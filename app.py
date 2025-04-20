@@ -87,11 +87,5 @@ if st.sidebar.button("Procesar registro"):
 
         # Botón para mostrar animación de emparejamiento
         if paired_events:
-            if st.button("Mostrar animación de emparejamiento"):
-                gif_path = animate_paired_events(fhr_clean, uc_clean, fs, baseline_obj, decelerations, contractions, paired_events)
-                if gif_path:
-                    st.subheader("Animación de deceleraciones (rojo) emparejadas con contracciones (verde)")
-                    gif_bytes = open(gif_path, "rb").read()
-                    st.image(gif_bytes, format="gif")
-                else:
-                    st.info("No hay deceleraciones del tipo seleccionado para animar.")
+            gif_path = generar_animacion(fhr, uc, fs, dBaseline, decelerations, contractions, paired_events)
+            st.image(gif_path, caption="Animación de eventos emparejados")
