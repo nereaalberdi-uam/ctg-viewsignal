@@ -620,6 +620,6 @@ def get_classified_decelerations(fhr, uc, fs, verbose = False):
 
     figs = []
     if verbose:
-        figs = plot_decc_contr(fhr, uc, fs, decelerations, mean_fhr, contractions)
+        figs = plot_decc_contr(fhr, uc, fs, decelerations, contractions)
     
     return early_decs, late_decs, variable_decs, decelerations, contractions, paired_events, mean_fhr, figs
