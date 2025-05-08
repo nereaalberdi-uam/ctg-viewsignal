@@ -583,13 +583,9 @@ def animate_paired_events(fhr, cu, fs, baseline_fhr, decelerations, contractions
     plt.close(fig)  # Prevent duplicate static display
     
     # Guardar animación como gif
-    if out_path is None:
-        with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as tmpfile:
+    with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as tmpfile:
             ani.save(tmpfile.name, writer='pillow')
             return tmpfile.name
-    else:
-        ani.save(out_path, writer='pillow')
-        return out_path
 
 #----------------------------------------------PIPELINE-----------------------------------------------------------
 
