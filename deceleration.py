@@ -4,54 +4,13 @@ import numpy as np
 import pandas as pd
 from numpy import mean
 from scipy.signal import butter, filtfilt
+from scipy.ndimage import uniform_filter1d
 
 from matplotlib.animation import FuncAnimation
 import streamlit as st
 import tempfile
 import os
-#---------------------------------------- BASELINE -----------------------------------------
-    
-class Baseline:
-    def __init__(self, center: float, window_size = 5.0):
-        """
-        Initializes the Baseline object.
-        
-        :param center: The center of the baseline (fixed float).
-        :param window_size: The window size around the center to create the baseline band (fixed float).
-        """
-        self.center = center
-        self.window_size = window_size
-        self.lower_bound = center - window_size / 2
-        self.upper_bound = center + window_size / 2
 
-    def under_baseline(self, signal: np.ndarray) -> np.ndarray:
-        """
-        Returns a boolean array where True indicates values of the signal that are below the baseline (lower bound).
-        
-        :param signal: The signal (numpy array).
-        :return: Boolean array where True indicates signal below the baseline.
-        """
-        return signal < self.lower_bound
-
-    def above_baseline(self, signal: np.ndarray) -> np.ndarray:
-        """
-        Returns a boolean array where True indicates values of the signal that are above the baseline (upper bound).
-        
-        :param signal: The signal (numpy array).
-        :return: Boolean array where True indicates signal above the baseline.
-        """
-        return signal > self.upper_bound
-
-    def in_baseline_band(self, signal: np.ndarray) -> np.ndarray:
-        """
-        Returns a boolean array where True indicates values of the signal that are within the baseline bounds.
-        
-        :param signal: The signal (numpy array).
-        :return: Boolean array where True indicates signal within the baseline band.
-        """
-        return (signal >= self.lower_bound) & (signal <= self.upper_bound)
-
-#---------------------------------------- BASELINE FOR DECELERATION -----------------------------------------
 def get_mean(signal, fs, start_time=0, end_time=None, plot = False):
     """
     Returns mean value. Used for getting the baseline of FHR.
@@ -142,83 +101,52 @@ class Deceleration:
         """
         return (self.amplitude(baseline) > 15.0) and (self.duration > 15.0)
 
-def find_deceleration(fhr, baseline, fs, start_idx = 0):
-    """
-    Find a deceleration in the FHR signal, starting from the first point below the baseline,
-    then reaching the baseline again and finding the nadir in that range.
+def find_all_decelerations(fhr, fs, verbose=False):
+    window_size = int(10 * 60 * fs)  # 10 minutes in samples
+    if window_size % 2 == 0:
+        window_size += 1  # ensure odd window for centered smoothing
+    
+    # Compute moving average (baseline)
+    baseline = uniform_filter1d(fhr, size=window_size, mode='nearest')
 
-    Parameters:
-    - fhr: The FHR signal (numpy array).
-    - baseline: The baseline FHR value (float).
-    - fs: The sampling frequency (int).
+    below_baseline = fhr < baseline
+    decelerations = []
 
-    Returns:
-    - A Deceleration object containing the start_time, nadir_time, end_time and nadir_value.
-    """
-    # 1. Find the first point below the baseline
-    for i in range(start_idx, len(fhr)-1):
-        if (baseline.in_baseline_band(fhr[i]) or baseline.above_baseline(fhr[i]) ) and baseline.under_baseline(fhr[i+1]):
+    in_decel = False
+    start_idx = None
+
+    for i in range(len(fhr)):
+        if below_baseline[i] and not in_decel:
             start_idx = i
-            break
-    
-    if start_idx is None:
-        # No point below baseline found
-        return None
+            in_decel = True
+        elif not below_baseline[i] and in_decel:
+            end_idx = i - 1
+            segment = fhr[start_idx:end_idx+1]
+            nadir_idx_rel = np.argmin(segment)
+            nadir_idx = start_idx + nadir_idx_rel
+            nadir_value = fhr[nadir_idx]
 
-    # 2. Find the next point where the FHR crosses the baseline again
-    end_idx = None
-    for i in range(start_idx + 1, len(fhr)):
-        if baseline.in_baseline_band(fhr[i]) or baseline.above_baseline(fhr[i]):
-            end_idx = i
-            break
-    
-    if end_idx is None:
-        # No point above baseline found
-        return None
+            decel = Deceleration(start_idx, nadir_idx, end_idx, fs, nadir_value)
 
-    # 3. Find the nadir (minimum point) between start_idx and end_idx
-    nadir_idx = np.argmin(fhr[start_idx:end_idx]) + start_idx
-    nadir_value = fhr[nadir_idx]
+            if decel.check(baseline[nadir_idx]):
+                decelerations.append(decel)
+                if verbose:
+                    print(f"Deceleration from {decel.start_time:.1f}s to {decel.end_time:.1f}s, amplitude: {decel.amplitude(baseline[nadir_idx]):.1f}")
+            in_decel = False
 
-    # Create a Deceleration object
-    deceleration = Deceleration(start_idx, nadir_idx, end_idx, fs, nadir_value)
+    # Handle edge case: if signal ends in a deceleration
+    if in_decel:
+        end_idx = len(fhr) - 1
+        segment = fhr[start_idx:end_idx+1]
+        nadir_idx_rel = np.argmin(segment)
+        nadir_idx = start_idx + nadir_idx_rel
+        nadir_value = fhr[nadir_idx]
 
-    # Return the Deceleration object
-    return deceleration
-    
-def find_all_decelerations(fhr, baseline, fs, verbose = False):
-    """
-    Identifies all decelerations in the given FHR (Fetal Heart Rate) signal.
-
-    Parameters:
-    - fhr (numpy.ndarray): The FHR signal.
-    - baseline (float): The baseline FHR value used as a reference for detecting decelerations.
-    - fs (float): Sampling frequency in Hz.
-
-    Returns:
-    - decelerations (list): A list of detected deceleration objects.
-
-    Example Usage:
-    --------------
-    detected_decelerations = find_all_decelerations(fhr, baseline, fs)
-    """
-
-    decelerations = []  # List to store detected decelerations
-    start_idx = 0  # Initialize index to scan the signal
-
-    while start_idx < len(fhr):
-        # Call function to find the next deceleration event
-        deceleration = find_deceleration(fhr, baseline, fs, start_idx)
-        
-        if deceleration is None:
-            break  # Stop searching if no more decelerations are found
-
-        # Validate the detected deceleration against the baseline criterion
-        if deceleration.check(baseline):
-            decelerations.append(deceleration)  # Store valid deceleration
-        
-        # Move start_idx to the end of the detected deceleration to continue searching
-        start_idx = deceleration.end_idx
+        decel = Deceleration(start_idx, nadir_idx, end_idx, fs, nadir_value)
+        if decel.check(baseline[nadir_idx]):
+            decelerations.append(decel)
+            if verbose:
+                print(f"Deceleration from {decel.start_time:.1f}s to {decel.end_time:.1f}s, amplitude: {decel.amplitude(baseline[nadir_idx]):.1f}")
 
     if verbose:
         # Print the details of each valid deceleration
@@ -228,10 +156,11 @@ def find_all_decelerations(fhr, baseline, fs, verbose = False):
             print(f"  Nadir time: {decel.nadir_time:.2f} seconds")
             print(f"  End time: {decel.end_time:.2f} seconds")
             print(f"  Nadir value: {decel.nadir_value:.2f} BPM")
-            print(f"  Amplitude: {decel.amplitude(baseline):.2f} BPM")
+            print(f"  Amplitude: {decel.amplitude(baseline[decel.nadir_idx]):.2f} BPM")
             print(f"  Duration: {decel.duration:.2f} seconds\n")
             
-    return decelerations
+    return decelerations    
+
 #----------------------------------------- CONTRACTION -------------------------------------
 class Contraction:
     def __init__(self, start_idx, acme_idx, end_idx, fs, acme_value):
@@ -459,7 +388,7 @@ def clasificar_dec(paired_events, diff=1.0, form_criteria=False, verbose = False
 #----------------------------------------- PLOT ---------------------------------------------
 
 
-def plot_fhr_with_decelerations(fhr, fs, baseline, decelerations):
+def plot_fhr_with_decelerations(fhr, fs, decelerations):
     """
     Plot the FHR signal and highlight the deceleration areas with a different color.
 
@@ -470,14 +399,29 @@ def plot_fhr_with_decelerations(fhr, fs, baseline, decelerations):
     - decelerations: A list of Deceleration objects.
     """
     time = np.arange(len(fhr)) / fs
+
+    # Calculate baseline (10-min moving average)
+    window_size = int(10 * 60 * fs)
+    if window_size % 2 == 0:
+        window_size += 1
+    baseline = uniform_filter1d(fhr, size=window_size, mode='nearest')
+    
     fig, ax = plt.subplots(figsize=(12, 6))
     ax.plot(time, fhr, label='Fetal Heart Rate (FHR)', color='blue')
-    ax.axhline(y=baseline.center, color='green', linestyle='--', label=f'Baseline Center ({baseline.center} BPM)')
-    ax.fill_between(time, baseline.lower_bound, baseline.upper_bound, color='green', alpha=0.2, label='Baseline Band')
-
+    ax.plot(time, baseline, label='Baseline (Moving Avg)', color='green', linestyle='--')
+    
     for decel in decelerations:
-        ax.fill_between(time[decel.start_idx:decel.end_idx], fhr[decel.start_idx:decel.end_idx], baseline.center, color='red', alpha=0.3)
-        ax.plot([decel.start_time, decel.nadir_time, decel.end_time], [baseline.center, decel.nadir_value, baseline.center], 'ro')
+        t_segment = time[decel.start_idx:decel.end_idx+1]
+        fhr_segment = fhr[decel.start_idx:decel.end_idx+1]
+        baseline_segment = baseline[decel.start_idx:decel.end_idx+1]
+        
+        ax.fill_between(t_segment, fhr_segment, baseline_segment, 
+                         where=fhr_segment < baseline_segment,
+                         color='red', alpha=0.3)
+
+        ax.plot(decel.start_time, fhr[decel.start_idx], 'ro', label='Start' if decel == decelerations[0] else "")
+        ax.plot(decel.nadir_time, decel.nadir_value, 'ko', label='Nadir' if decel == decelerations[0] else "")
+        ax.plot(decel.end_time, fhr[decel.end_idx], 'ro', label='End' if decel == decelerations[0] else "")
 
     ax.set_xlabel('Time (s)')
     ax.set_ylabel('Fetal Heart Rate (BPM)')
@@ -511,12 +455,12 @@ def plot_cu_with_contractions(cu, fs, contractions):
     ax.grid(True)
     return fig
 
-def plot_decc_contr(fhr, cu, fs, decelerations, baseline_decc, contractions):
-    fig1 = plot_fhr_with_decelerations(fhr, fs, baseline_decc, decelerations)
+def plot_decc_contr(fhr, cu, fs, decelerations, contractions):
+    fig1 = plot_fhr_with_decelerations(fhr, fs, decelerations)
     fig2 = plot_cu_with_contractions(cu, fs, contractions)
     return [fig1, fig2]
 
-def animate_paired_events(fhr, cu, fs, baseline_fhr, decelerations, contractions, paired_events, dec_type="all", out_path=None):
+def animate_paired_events(fhr, cu, fs, baseline_fhr, decelerations, contractions, paired_events, dec_type="all"):
     """
     Animate FHR and CU signals in separate subplots, highlighting one paired deceleration-contraction at a time.
     Unpaired contractions remain unchanged, while paired contractions turn pale green over time.
@@ -525,14 +469,14 @@ def animate_paired_events(fhr, cu, fs, baseline_fhr, decelerations, contractions
     - fhr: The FHR signal (numpy array).
     - cu: The CU signal (numpy array).
     - fs: Sampling frequency (int).
-    - baseline_fhr: Baseline object for FHR.
+    - baseline_fhr: mean value of FHR.
     - decelerations: List of all detected Deceleration objects.
     - contractions: List of all detected Contraction objects.
     - paired_events: List of tuples (Deceleration, Contraction) that were successfully paired.
     - dec_type: Type of decelerations to show ("all", "early", "late", "variable").
 
     Returns:
-    - Animatio.
+    - Animation
     """
 
     # Filter paired events based on selected type
@@ -552,12 +496,12 @@ def animate_paired_events(fhr, cu, fs, baseline_fhr, decelerations, contractions
 
     # --- Plot FHR in the first subplot ---
     ax1.plot(time_fhr, fhr, label='Fetal Heart Rate (FHR)', color='blue', alpha=0.7)
-    ax1.axhline(y=baseline_fhr.center, color='green', linestyle='--', label='FHR Baseline')
+    ax1.axhline(y=baseline_fhr, color='green', linestyle='--', label='FHR Baseline')
 
     # Highlight all decelerations (default faded red)
     for decel in decelerations:
         ax1.fill_between(time_fhr[decel.start_idx:decel.end_idx], 
-                         fhr[decel.start_idx:decel.end_idx], baseline_fhr.center, 
+                         fhr[decel.start_idx:decel.end_idx], baseline_fhr, 
                          color='red', alpha=0.2)
 
     ax1.set_ylabel('FHR (BPM)')
@@ -613,7 +557,7 @@ def animate_paired_events(fhr, cu, fs, baseline_fhr, decelerations, contractions
         # Update deceleration points
         decel_points.set_data(
             [decel.start_time, decel.nadir_time, decel.end_time], 
-            [baseline_fhr.center, decel.nadir_value, baseline_fhr.center]
+            [baseline_fhr, decel.nadir_value, baseline_fhr]
         )
 
         # Update contraction points
@@ -639,7 +583,6 @@ def animate_paired_events(fhr, cu, fs, baseline_fhr, decelerations, contractions
     plt.close(fig)  # Prevent duplicate static display
     
     # Guardar animación como gif
-    # Si no se pasa un path, usar archivo temporal
     if out_path is None:
         with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as tmpfile:
             ani.save(tmpfile.name, writer='pillow')
@@ -651,14 +594,13 @@ def animate_paired_events(fhr, cu, fs, baseline_fhr, decelerations, contractions
 #----------------------------------------------PIPELINE-----------------------------------------------------------
 
 def get_decelerations(fhr, fs, verbose = False):
-    baseline = get_mean(fhr, fs, plot = verbose)
-    cBaseline = Baseline(baseline)
-    decelerations = find_all_decelerations(fhr, cBaseline, fs, verbose = verbose)
+    mean_fhr = get_mean(fhr, fs, plot = verbose)
+    decelerations = find_all_decelerations(fhr, fs, verbose = verbose)
     if verbose:
-        plot_fhr_with_decelerations(fhr, fs, cBaseline, decelerations)
+        plot_fhr_with_decelerations(fhr, fs, decelerations)
 
 
-    return decelerations, cBaseline
+    return decelerations, mean_fhr
 
 def get_contractions(uc, fs, window_size = 3, verbose = False):
     contractions = find_all_contractions(uc, fs)
@@ -668,8 +610,10 @@ def get_contractions(uc, fs, window_size = 3, verbose = False):
     return contractions
 
 def get_classified_decelerations(fhr, uc, fs, verbose = False):
-    decelerations, dBaseline = get_decelerations(fhr, fs, verbose = False)
-    contractions = get_contractions(uc, fs, window_size = 3, verbose = False)
+    decelerations, mean_fhr = get_decelerations(fhr, fs, verbose = verbose)
+    contractions = get_contractions(uc, fs, verbose = verbose)
+    if verbose:
+        plot_decc_contr(fhr, uc, fs, decelerations, contractions)
     
     paired_events = emparejar(decelerations, contractions, tolerance = 3)
     early_decs, late_decs, variable_decs = clasificar_dec(paired_events, diff=5.0, form_criteria=True, verbose = verbose)
