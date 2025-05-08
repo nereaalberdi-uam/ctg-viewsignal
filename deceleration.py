@@ -87,7 +87,7 @@ class Deceleration:
         Returns:
         - Amplitude: The difference between the baseline and nadir value.
         """
-        return baseline.upper_bound - self.nadir_value
+        return baseline - self.nadir_value
 
     def check(self, baseline):
         """
