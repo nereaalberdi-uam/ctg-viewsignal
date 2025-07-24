@@ -46,7 +46,7 @@ download_and_extract_dropbox_zip(DROPBOX_URL)
 
 VALID_IDS = list(map(str, list(range(1001, 1507)) + list(range(2001, 2047))))
 
-def process_record():
+def process_record(record_name):
     if not record_name:
         st.error("Por favor ingrese el ID del registro.")
     elif record_name not in VALID_IDS:
@@ -114,8 +114,7 @@ st.sidebar.header("Seleccionar registro CTG")
 # Campo de entrada con Enter activado
 record_name = st.sidebar.text_input(
     "Nombre del registro (ID):",
-    value="",
-    on_change=process_record
+    value=""
 )
 
 st.sidebar.markdown(
@@ -123,6 +122,7 @@ st.sidebar.markdown(
     "`1001` a `1506` y `2001` a `2046`  \n"
     "(No existen registros entre `1507` y `2000`)"
 )
+st.sidebar.caption("Presiona el botón *Procesar registro* para iniciar el análisis. (Enter no ejecuta nada)")
 
 if st.sidebar.button("Procesar registro"):
-    process_record()
+    process_record(record_name)
