@@ -46,7 +46,12 @@ download_and_extract_dropbox_zip(DROPBOX_URL)
 
 # Sidebar inputs for record selection and parameters
 st.sidebar.header("Seleccionar registro CTG")
-record_name = st.sidebar.text_input("Nombre del registro (ID):", value="")
+# Campo de entrada con Enter activado
+record_name = st.sidebar.text_input(
+    "Nombre del registro (ID):",
+    value="",
+    on_change=process_record
+)
 
 st.sidebar.markdown(
     "**Valores válidos:**  \n"
@@ -56,7 +61,7 @@ st.sidebar.markdown(
 
 VALID_IDS = list(map(str, list(range(1001, 1507)) + list(range(2001, 2047))))
 
-if st.sidebar.button("Procesar registro"):
+def process_record():
     if not record_name:
         st.error("Por favor ingrese el ID del registro.")
     elif record_name not in VALID_IDS:
@@ -118,3 +123,6 @@ if st.sidebar.button("Procesar registro"):
         if paired_events:
             gif_path = animate_paired_events(fhr_clean, uc_clean, fs, baseline, decelerations, contractions, paired_events)
             st.image(gif_path, caption="Animación de Eventos Emparejados")
+
+if st.sidebar.button("Procesar registro"):
+    process_record()
