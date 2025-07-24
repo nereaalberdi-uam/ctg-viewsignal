@@ -606,6 +606,7 @@ def get_contractions(uc, fs, window_size = 3, verbose = False):
     return contractions
 
 def get_classified_decelerations(fhr, uc, fs, verbose = False):
+    duration_sec = len(fhr) / fs
     decelerations, mean_fhr = get_decelerations(fhr, fs, verbose = verbose)
     contractions = get_contractions(uc, fs, verbose = verbose)
     if verbose:
@@ -618,4 +619,4 @@ def get_classified_decelerations(fhr, uc, fs, verbose = False):
     if verbose:
         figs = plot_decc_contr(fhr, uc, fs, decelerations, contractions)
     
-    return early_decs, late_decs, variable_decs, decelerations, contractions, paired_events, mean_fhr, figs
+    return duration_sec, early_decs, late_decs, variable_decs, decelerations, contractions, paired_events, mean_fhr, figs
