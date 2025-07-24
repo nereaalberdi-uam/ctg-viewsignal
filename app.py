@@ -44,21 +44,6 @@ def download_and_extract_dropbox_zip(url, extract_to=DB_FOLDER, zip_name="ctg_da
 # Descargar los datos si no están
 download_and_extract_dropbox_zip(DROPBOX_URL)
 
-# Sidebar inputs for record selection and parameters
-st.sidebar.header("Seleccionar registro CTG")
-# Campo de entrada con Enter activado
-record_name = st.sidebar.text_input(
-    "Nombre del registro (ID):",
-    value="",
-    on_change=process_record
-)
-
-st.sidebar.markdown(
-    "**Valores válidos:**  \n"
-    "`1001` a `1506` y `2001` a `2046`  \n"
-    "(No existen registros entre `1507` y `2000`)"
-)
-
 VALID_IDS = list(map(str, list(range(1001, 1507)) + list(range(2001, 2047))))
 
 def process_record():
@@ -123,6 +108,21 @@ def process_record():
         if paired_events:
             gif_path = animate_paired_events(fhr_clean, uc_clean, fs, baseline, decelerations, contractions, paired_events)
             st.image(gif_path, caption="Animación de Eventos Emparejados")
+
+# Sidebar inputs for record selection and parameters
+st.sidebar.header("Seleccionar registro CTG")
+# Campo de entrada con Enter activado
+record_name = st.sidebar.text_input(
+    "Nombre del registro (ID):",
+    value="",
+    on_change=process_record
+)
+
+st.sidebar.markdown(
+    "**Valores válidos:**  \n"
+    "`1001` a `1506` y `2001` a `2046`  \n"
+    "(No existen registros entre `1507` y `2000`)"
+)
 
 if st.sidebar.button("Procesar registro"):
     process_record()
