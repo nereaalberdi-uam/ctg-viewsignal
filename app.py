@@ -60,7 +60,9 @@ def process_record(record_name):
             st.stop()
 
         # Mostrar señales originales sin procesar
+        original_duration = (len(original_fhr) / fs) / 60
         st.subheader("Señales Originales FHR y UC")
+        st.write(f"**Duración del registro original en minutos:** {original_duration:.1f}")
         fig_orig = plot_ctg_signals(original_fhr, original_uc, fs)
         st.pyplot(fig_orig)
 
